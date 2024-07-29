@@ -96,7 +96,7 @@
       (goto-char start)
       (set-mark-command nil)
       (goto-char end)
-      (wrap-and-comment-question))))
+      (ellellemm-region-as-question))))
 
 (defun generate-prompt ()
   "Generate a prompt for a LLM, including buffer mode info and instructions for handling questions and answers."
