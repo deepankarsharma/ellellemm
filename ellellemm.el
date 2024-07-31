@@ -17,6 +17,12 @@
 (require 'plz)
 
 
+(defvar *ellellemm-model* "claude-3-5-sonnet-20240620"
+  "The currently active model for ellellemm queries.")
+
+(defvar *ellellemm-debug-mode* nil
+  "When non-nil, enable debug output for ellellemm operations.")
+
 ;; Supported models
 ;; Provider Name,  Model name
 ;; groq, llama-3.1-70b-versatile
@@ -82,40 +88,25 @@ Temporarily disables user editing of the buffer."
        (setq buffer-read-only nil)
        (set-buffer-modified-p old-modified))))
 
+(defun ellellemm-provider-from-model (model)
+  "Deduce the provider (groq or claude) from the MODEL name."
+  (cond
+   ((string-prefix-p "claude-" model) "claude")
+   ((or (string-prefix-p "llama-" model)
+        (string-prefix-p "mixtral-" model))
+    "groq")
+   (t (error "Unknown model provider for %s" model))))
+
+(defun ellellemm-provider-fn (model)
+  "Return the appropriate provider function for the given MODEL."
+  (let ((provider (ellellemm-provider-from-model model)))
+    (pcase provider
+      ("claude" #'claude-external-process)
+      ("groq" #'groq-external-process)
+      (_ (error "Unknown provider for model %s" model)))))
 
 
 ;; Calls to LLM providers
-(defun groq-external-process (prompt buffer model)
-  "Stream Groq's response to PROMPT using MODEL and insert it into BUFFER using external processes."
-  (let* ((url "https://api.groq.com/openai/v1/chat/completions")
-         (api-key (get-groq-api-key))
-         (json-payload (json-encode
-                        `(("model" . ,model)
-                          ("messages" . [,(list (cons "role" "user")
-                                                (cons "content" prompt))])
-                          ("max_tokens" . 1024)
-                          ("stream" . t))))
-         (curl-and-jq-command (format "curl -s -N -X POST %s \
--H 'Authorization: Bearer %s' \
--H 'Content-Type: application/json' \
--d '%s' \
-| grep '^data:' \
-| sed -u 's/^data: //g' \
-| jq -j 'select(.choices != null) | .choices[0].delta.content // empty'"
-                                       url api-key json-payload)))
-    (make-process
-     :name "groq-stream"
-     :buffer buffer
-     :command (list "bash" "-c" curl-and-jq-command)
-     :filter (lambda (proc string)
-               (when (buffer-live-p (process-buffer proc))
-                 (with-current-buffer (process-buffer proc)
-                   (with-buffer-read-only
-                    (goto-char (point-max))
-                    (insert string)))))
-     :sentinel (lambda (proc event)
-                 (when (string= event "finished\n")
-                   (message "Groq's response complete."))))))
 
 (defun groq-external-process (prompt buffer model)
   "Stream Groq's response to PROMPT using MODEL and insert it into BUFFER using external processes."
@@ -133,50 +124,18 @@ Temporarily disables user editing of the buffer."
 -d @%s \
 | grep '^data:' \
 | sed -u 's/^data: //g' \
+| grep '^{' \
 | jq -j 'select(.choices != null) | .choices[0].delta.content // empty'"
                                       url api-key temp-file)))
-    (message "groq curl command: %s" curl-and-jq-command)
-    (unwind-protect
-        (progn
-          (with-temp-file temp-file
-            (insert (json-encode json-payload)))
-          (make-process
-           :name "groq-stream"
-           :buffer buffer
-           :command (list "bash" "-c" curl-and-jq-command)
-           :filter (lambda (proc string)
-                     (when (buffer-live-p (process-buffer proc))
-                       (with-current-buffer (process-buffer proc)
-                         (with-buffer-read-only
-                          (goto-char (point-max))
-                          (insert string)))))
-           :sentinel (lambda (proc event)
-                       (when (string= event "finished\n")
-                         (message "Groq's response complete.")))))
-      (delete-file temp-file))))
-
-
-(defun claude-external-process (prompt buffer model)
-  "Stream Claude's response to PROMPT using MODEL and insert it into BUFFER using external processes."
-  (let* ((url "https://api.anthropic.com/v1/messages")
-         (api-key (get-anthropic-api-key))
-         (json-payload (json-encode
-                        `(("model" . ,model)
-                          ("messages" . [,(list (cons "role" "user")
-                                                (cons "content" prompt))])
-                          ("max_tokens" . 1024)
-                          ("stream" . t))))
-         (curl-and-jq-command (format "curl -s -N -X POST %s \
--H 'anthropic-version: 2023-06-01' \
--H 'content-type: application/json' \
--H 'x-api-key: %s' \
--d '%s' \
-| grep '^data:' \
-| sed -u 's/^data: //g' \
-| jq -j 'select(.type == \"content_block_delta\") | .delta.text // empty'"
-                                       url api-key json-payload)))
+    ;;(message "groq curl command: %s" curl-and-jq-command)
+    (with-current-buffer buffer
+      (when *ellellemm-debug-mode*
+        (insert "Debug: Groq curl command:\n")
+        (insert (format "%s\n\n" (replace-regexp-in-string api-key "$GROQ_API_KEY" curl-and-jq-command)))))
+    (with-temp-file temp-file
+      (insert (json-encode json-payload)))
     (make-process
-     :name "claude-stream"
+     :name "groq-stream"
      :buffer buffer
      :command (list "bash" "-c" curl-and-jq-command)
      :filter (lambda (proc string)
@@ -185,10 +144,10 @@ Temporarily disables user editing of the buffer."
                    (with-buffer-read-only
                     (goto-char (point-max))
                     (insert string)))))
-                    ;;(sit-for 0.01)))))
      :sentinel (lambda (proc event)
                  (when (string= event "finished\n")
-                   (message "Claude's response complete."))))))
+                   (message "Groq's response complete."))))))
+
 
 (defun claude-external-process (prompt buffer model)
   "Stream Claude's response to PROMPT using MODEL and insert it into BUFFER using external processes."
@@ -207,27 +166,28 @@ Temporarily disables user editing of the buffer."
 -d @%s \
 | grep '^data:' \
 | sed -u 's/^data: //g' \
+| grep '^{' \
 | jq -j 'select(.type == \"content_block_delta\") | .delta.text // empty'"
                                       url api-key temp-file)))
-    (message "claude curl command: %s" curl-and-jq-command)
-    (unwind-protect
-        (progn
-          (with-temp-file temp-file
-            (insert (json-encode json-payload)))
-          (make-process
-           :name "claude-stream"
-           :buffer buffer
-           :command (list "bash" "-c" curl-and-jq-command)
-           :filter (lambda (proc string)
-                     (when (buffer-live-p (process-buffer proc))
-                       (with-current-buffer (process-buffer proc)
-                         (with-buffer-read-only
-                          (goto-char (point-max))
-                          (insert string)))))
-           :sentinel (lambda (proc event)
-                       (when (string= event "finished\n")
-                         (message "Claude's response complete.")))))
-      (delete-file temp-file))))
+    (with-current-buffer buffer
+      (when *ellellemm-debug-mode*
+        (insert "Debug: Claude curl command:\n")
+        (insert (format "%s\n\n" (replace-regexp-in-string api-key "$ANTHROPIC_API_KEY" curl-and-jq-command)))))
+    (with-temp-file temp-file
+      (insert (json-encode json-payload)))
+    (make-process
+                 :name "claude-stream"
+                 :buffer buffer
+                 :command (list "bash" "-c" curl-and-jq-command)
+                 :filter (lambda (proc string)
+                           (when (buffer-live-p (process-buffer proc))
+                             (with-current-buffer (process-buffer proc)
+                               (with-buffer-read-only
+                                (goto-char (point-max))
+                                (insert string)))))
+                 :sentinel (lambda (proc event)
+                             (when (string= event "finished\n")
+                               (message "Claude's response complete."))))))
 
 
 ;; ************* Prompts *****************
@@ -263,128 +223,122 @@ Now, please explain this specific code snippet:
 %s
 ```
 
-Provide a detailed explanation of what this code does, its purpose, and any important concepts or patterns it demonstrates. If you notice any potential issues or improvements, please mention those as well."
+Provide a detailed explanation of what this code does, its purpose, and any important concepts or patterns it demonstrates. If you notice any potential issues or improvements, please mention those as well. Produce markdown output"
                 buffer-name
                 major-mode-name
                 surrounding-context
                 selected-code))
     (error "No region selected.  Please select a region of code to explain")))
 
+(defun generate-code-question-prompt (code question)
+  "Generate a prompt for Claude to answer a QUESTION about the given CODE."
+  (let* ((buffer-name (buffer-name))
+         (major-mode-name (symbol-name major-mode)))
+    (format "Please answer the following question about this code snippet.
 
-;; ************* END USER FACING *****************
-;; Emacs interactive functions
-(defun ellellemm-region-as-question ()
-  "Ask question based on the current region."
-  (ellellemm-ask-question (buffer-substring-no-properties (region-beginning) (region-end))))
+Context information:
+- Buffer name: %s
+- Buffer mode: %s
 
-(defun ellellemm-line-as-question ()
-  "Set region to current line and call wrap-and-comment-question function."
-  (interactive)
-  (let ((start (line-beginning-position))
-        (end (line-end-position)))
-    (save-excursion
-      (goto-char start)
-      (set-mark-command nil)
-      (goto-char end)
-      (ellellemm-region-as-question))))
+Code snippet:
 
-(defun ellellemm-ask-model (question model provider)
-  "Ask QUESTION to the specified MODEL using the given PROVIDER."
-  (let ((prompt (generate-single-question-prompt question))
-        (buffer (get-or-create-ellellemm-buffer)))
+```
+%s
+```
+
+Question: %s
+
+Please provide a detailed answer to the question, explaining any relevant concepts or patterns in the code. If additional context is needed to fully answer the question, please mention that. Produce markdown output."
+            buffer-name
+            major-mode-name
+            code
+            question)))
+
+
+
+
+(defun ellellemm-ask-model (question model)
+  "Ask QUESTION to the specified MODEL."
+  (let* ((prompt (generate-single-question-prompt question))
+         (buffer (get-or-create-ellellemm-buffer))
+         (provider (ellellemm-provider-from-model model))
+         (provider-fn (ellellemm-provider-fn model)))
     (with-current-buffer buffer
       (insert-line-separator)
       (insert (format "# Question: %s" question))
       (newline 2)
       (insert (format "%s's response (%s):\n\n" provider model)))
-    (cond
-     ((string= provider "groq") (groq-external-process prompt buffer model))
-     ((string= provider "claude") (claude-external-process prompt buffer model))
-     (t (error "Unsupported provider: %s" provider)))))
+    (funcall provider-fn prompt buffer model)))
 
-(defun ellellemm-groq-ask-llama31-versatile (question)
-  "Ask QUESTION using Groq's llama-3.1-70b-versatile model."
-  (interactive "sAsk your question: ")
-  (ellellemm-ask-model question "llama-3.1-70b-versatile" "groq"))
-
-(defun ellellemm-groq-ask-llama31-instant (question)
-  "Ask QUESTION using Groq's llama-3.1-8b-instant model."
-  (interactive "sAsk your question: ")
-  (ellellemm-ask-model question "llama-3.1-8b-instant" "groq"))
-
-(defun ellellemm-groq-ask-mixtral (question)
-  "Ask QUESTION using Groq's mixtral-8x7b-32768 model."
-  (interactive "sAsk your question: ")
-  (ellellemm-ask-model question "mixtral-8x7b-32768" "groq"))
-
-(defun ellellemm-claude-ask-sonnet (question)
-  "Ask QUESTION using Claude's claude-3-5-sonnet-20240620 model."
-  (interactive "sAsk your question: ")
-  (ellellemm-ask-model question "claude-3-5-sonnet-20240620" "claude"))
-
-(defun ellellemm-claude-ask-opus (question)
-  "Ask QUESTION using Claude's claude-3-opus-20240229 model."
-  (interactive "sAsk your question: ")
-  (ellellemm-ask-model question "claude-3-opus-20240229" "claude"))
-
-(defun ellellemm-claude-ask-haiku (question)
-  "Ask QUESTION using Claude's claude-3-haiku-20240307 model."
-  (interactive "sAsk your question: ")
-  (ellellemm-ask-model question "claude-3-haiku-20240307" "claude"))
-
-(defun ellellemm-ask-question (question)
-  "Ask QUESTION using Claude's claude-3-5-sonnet-20240620 model."
-  (interactive "sAsk your question: ")
-  (ellellemm-ask-model question "claude-3-5-sonnet-20240620" "claude"))
-
-(defun ellellemm-explain-code-model (model provider)
-  "Explain the code in the selected region using the specified MODEL and PROVIDER."
-  (let ((prompt (generate-code-explanation-prompt))
-        (buffer (get-or-create-ellellemm-buffer)))
+(defun ellellemm-explain-region-model (model)
+  "Explain the code in the selected region using the specified MODEL."
+  (let* ((prompt (generate-code-explanation-prompt))
+         (buffer (get-or-create-ellellemm-buffer))
+         (provider (ellellemm-provider-from-model model))
+         (provider-fn (ellellemm-provider-fn model)))
     (with-current-buffer buffer
       (insert-line-separator)
       (insert "# Code Explanation\n\n")
       (insert (format "%s's explanation (%s):\n\n" provider model)))
-    (cond
-     ((string= provider "groq") (groq-external-process prompt buffer model))
-     ((string= provider "claude") (claude-external-process prompt buffer model))
-     (t (error "Unsupported provider: %s" provider)))))
+    (funcall provider-fn prompt buffer model)))
 
-(defun ellellemm-groq-explain-llama31-versatile ()
-  "Explain the code in the selected region using Groq's llama-3.1-70b-versatile model."
+(defun ellellemm-ask-about-region-model (question model)
+  "Ask a QUESTION about the code in the selected region using MODEL."
+  (if (use-region-p)
+      (let* ((region-start (region-beginning))
+             (region-end (region-end))
+             (selected-code (buffer-substring-no-properties region-start region-end))
+             (prompt (generate-code-question-prompt selected-code question))
+             (buffer (get-or-create-ellellemm-buffer))
+             (provider (ellellemm-provider-from-model *ellellemm-model*))
+             (provider-fn (ellellemm-provider-fn *ellellemm-model*)))
+        (with-current-buffer buffer
+          (insert-line-separator)
+          (insert "# Question about Code\n\n")
+          (insert (format "Question: %s\n\n" question))
+          (insert (format "%s's response (%s):\n\n" provider model)))
+        (funcall provider-fn prompt buffer model))
+    (error "No region selected.  Please select a region of code to ask about")))
+
+
+;; ************* END USER FACING *****************
+;; Emacs interactive functions
+
+(defun ellellemm-set-model (model)
+  "Set the active MODEL for ellellemm queries."
+  (interactive
+   (list
+    (completing-read "Choose model: "
+                     '("claude-3-5-sonnet-20240620"
+                       "claude-3-opus-20240229"
+                       "claude-3-haiku-20240307"
+                       "llama-3.1-70b-versatile"
+                       "llama-3.1-8b-instant"
+                       "mixtral-8x7b-32768"))))
+  (setq *ellellemm-model* model)
+  (message "Active model set to %s" model))
+
+
+(defun ellellemm-ask (question)
+  "Ask QUESTION using the current *ellellemm-model*."
+  (interactive "sAsk your question: ")
+  (ellellemm-ask-model question *ellellemm-model*))
+
+(defun ellellemm-explain-region ()
+  "Explain the code in the selected region using the current *ellellemm-model*."
   (interactive)
-  (ellellemm-explain-code-model "llama-3.1-70b-versatile" "groq"))
+  (ellellemm-explain-region-model *ellellemm-model*))
 
-(defun ellellemm-groq-explain-llama31-instant ()
-  "Explain the code in the selected region using Groq's llama-3.1-8b-instant model."
+(defun ellellemm-ask-about-region (question)
+  "Ask a QUESTION about the code in the selected region using the current *ellellemm-model*."
+  (interactive "sAsk a question about the selected code: ")
+  (ellellemm-ask-about-region-model question *ellellemm-model*))
+
+(defun ellellemm-toggle-debug-mode ()
+  "Toggle the debug mode for ellellemm operations."
   (interactive)
-  (ellellemm-explain-code-model "llama-3.1-8b-instant" "groq"))
-
-(defun ellellemm-groq-explain-mixtral ()
-  "Explain the code in the selected region using Groq's mixtral-8x7b-32768 model."
-  (interactive)
-  (ellellemm-explain-code-model "mixtral-8x7b-32768" "groq"))
-
-(defun ellellemm-claude-explain-sonnet ()
-  "Explain the code in the selected region using Claude's claude-3-5-sonnet-20240620 model."
-  (interactive)
-  (ellellemm-explain-code-model "claude-3-5-sonnet-20240620" "claude"))
-
-(defun ellellemm-claude-explain-opus ()
-  "Explain the code in the selected region using Claude's claude-3-opus-20240229 model."
-  (interactive)
-  (ellellemm-explain-code-model "claude-3-opus-20240229" "claude"))
-
-(defun ellellemm-claude-explain-haiku ()
-  "Explain the code in the selected region using Claude's claude-3-haiku-20240307 model."
-  (interactive)
-  (ellellemm-explain-code-model "claude-3-haiku-20240307" "claude"))
-
-(defun ellellemm-explain-code ()
-  "Explain the code in the selected region using Claude's claude-3-5-sonnet-20240620 model (default)."
-  (interactive)
-  (ellellemm-explain-code-model "claude-3-5-sonnet-20240620" "claude"))
-
+  (setq *ellellemm-debug-mode* (not *ellellemm-debug-mode*))
+  (message "Ellellemm debug mode %s" (if *ellellemm-debug-mode* "enabled" "disabled")))
 (provide 'ellellemm)
 
 ;;; ellellemm.el ends here

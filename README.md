@@ -1,69 +1,66 @@
 # ellellemm
 
-ellellemm is an Emacs package that allows users to leverage Large Language Models (LLMs) for coding and productivity tasks directly within Emacs.
+ellellemm is an Emacs package that allows idiomatic use of Large Language Models (LLMs) within Emacs. It supports models from both Groq and Anthropic, providing a seamless interface for interacting with these powerful AI models directly from your Emacs environment.
 
 ## Features
 
-- Interact with various LLM models from Groq and Anthropic (Claude)
-- Ask questions and get responses within Emacs
-- Explain code snippets using AI
-- Seamless integration with your Emacs workflow
+- Support for multiple LLM providers (Groq and Anthropic)
+- Easy model switching
+- Interactive functions for asking questions, explaining code, and more
+- Debug mode for troubleshooting
+- Markdown output for clear formatting
 
 ## Installation
 
-1. Ensure you have the required dependencies:
-   - Emacs 24.3 or later
-   - `plz` package
-   - `poly-markdown-mode` package
-
-2. Set up your API keys as environment variables:
-   - `ANTHROPIC_API_KEY` for Claude models
-   - `GROQ_API_KEY` for Groq models
-
-3. Add the `ellellemm.el` file to your Emacs load path and require it in your Emacs configuration:
+1. Ensure you have Emacs 24.3 or later installed.
+2. Copy `ellellemm.el` to your Emacs load path.
+3. Add the following to your Emacs configuration:
 
 ```elisp
-(add-to-list 'load-path "/path/to/ellellemm")
 (require 'ellellemm)
 ```
 
-## Usage
-
-ellellemm provides several interactive functions that you can use to interact with LLMs:
-
-| Function Name | Description |
-|---------------|-------------|
-| `ellellemm-region-as-question` | Ask a question based on the selected region |
-| `ellellemm-line-as-question` | Ask a question based on the current line |
-| `ellellemm-groq-ask-llama31-versatile` | Ask a question using Groq's llama-3.1-70b-versatile model |
-| `ellellemm-groq-ask-llama31-instant` | Ask a question using Groq's llama-3.1-8b-instant model |
-| `ellellemm-groq-ask-mixtral` | Ask a question using Groq's mixtral-8x7b-32768 model |
-| `ellellemm-claude-ask-sonnet` | Ask a question using Claude's claude-3-5-sonnet-20240620 model |
-| `ellellemm-claude-ask-opus` | Ask a question using Claude's claude-3-opus-20240229 model |
-| `ellellemm-claude-ask-haiku` | Ask a question using Claude's claude-3-haiku-20240307 model |
-| `ellellemm-ask-question` | Ask a question using Claude's claude-3-5-sonnet-20240620 model (default) |
-| `ellellemm-groq-explain-llama31-versatile` | Explain selected code using Groq's llama-3.1-70b-versatile model |
-| `ellellemm-groq-explain-llama31-instant` | Explain selected code using Groq's llama-3.1-8b-instant model |
-| `ellellemm-groq-explain-mixtral` | Explain selected code using Groq's mixtral-8x7b-32768 model |
-| `ellellemm-claude-explain-sonnet` | Explain selected code using Claude's claude-3-5-sonnet-20240620 model |
-| `ellellemm-claude-explain-opus` | Explain selected code using Claude's claude-3-opus-20240229 model |
-| `ellellemm-claude-explain-haiku` | Explain selected code using Claude's claude-3-haiku-20240307 model |
-| `ellellemm-explain-code` | Explain selected code using Claude's claude-3-5-sonnet-20240620 model (default) |
-
-You can bind these functions to keyboard shortcuts or call them using `M-x`.
-
 ## Configuration
 
-You can customize the behavior of ellellemm by modifying the provided functions or adding new ones based on your specific needs.
+Set your API keys as environment variables:
+
+- For Anthropic: `ANTHROPIC_API_KEY`
+- For Groq: `GROQ_API_KEY`
+
+## Usage
+
+ellellemm provides several interactive functions for interacting with LLMs:
+
+| Function | Description |
+|----------|-------------|
+| `ellellemm-set-model` | Set the active model for ellellemm queries |
+| `ellellemm-ask` | Ask a question using the current model |
+| `ellellemm-explain-region` | Explain the code in the selected region using the current model |
+| `ellellemm-ask-about-region` | Ask a question about the code in the selected region using the current model |
+| `ellellemm-toggle-debug-mode` | Toggle debug mode for ellellemm operations |
+
+To use these functions, call them interactively using `M-x` or bind them to keyboard shortcuts.
+
+## Supported Models
+
+ellellemm supports the following models:
+
+### Groq
+- llama-3.1-70b-versatile
+- llama-3.1-8b-instant
+- mixtral-8x7b-32768
+
+### Anthropic (Claude)
+- claude-3-5-sonnet-20240620
+- claude-3-opus-20240229
+- claude-3-haiku-20240307
+
+You can switch between these models using the `ellellemm-set-model` function.
 
 ## Contributing
 
 Contributions to ellellemm are welcome! Please feel free to submit pull requests or create issues for bugs and feature requests.
 
-## License
+## Disclaimer
 
-This project is licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.
-
-## Author
-
-Deepankar Sharma <deepankarsharma@gmail.com>
+This software is provided as-is, and users are responsible for complying with the terms of service of the LLM providers (Groq and Anthropic) when using this package.
