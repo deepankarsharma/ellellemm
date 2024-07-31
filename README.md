@@ -1,63 +1,69 @@
 # ellellemm
 
-`ellellemm` is an Emacs package that allows users to interact with Language Models (LLMs) directly from within Emacs. It provides functionality to ask questions, get answers, and process text using LLMs, specifically using the Anthropic Claude API.
+ellellemm is an Emacs package that allows users to leverage Large Language Models (LLMs) for coding and productivity tasks directly within Emacs.
 
 ## Features
 
-- Stream responses from Claude directly into your Emacs buffer
-- Mark regions or lines as questions for LLM processing
-- Process entire buffers to answer multiple questions at once
-- Seamless integration with Emacs workflow
+- Interact with various LLM models from Groq and Anthropic (Claude)
+- Ask questions and get responses within Emacs
+- Explain code snippets using AI
+- Seamless integration with your Emacs workflow
 
 ## Installation
 
-1. Ensure you have Emacs 24.3 or later installed.
-2. Place `ellellemm.el` in your Emacs load path.
-3. Add the following to your Emacs configuration:
+1. Ensure you have the required dependencies:
+   - Emacs 24.3 or later
+   - `plz` package
+   - `poly-markdown-mode` package
+
+2. Set up your API keys as environment variables:
+   - `ANTHROPIC_API_KEY` for Claude models
+   - `GROQ_API_KEY` for Groq models
+
+3. Add the `ellellemm.el` file to your Emacs load path and require it in your Emacs configuration:
 
 ```elisp
+(add-to-list 'load-path "/path/to/ellellemm")
 (require 'ellellemm)
 ```
 
-4. Set the `ANTHROPIC_API_KEY` environment variable with your Anthropic API key.
-
 ## Usage
 
-Here are the main interactive functions provided by `ellellemm`:
+ellellemm provides several interactive functions that you can use to interact with LLMs:
 
-| Function | Description |
-|----------|-------------|
-| `ellellemm-region-as-question` | Wraps the current region with `<QUESTION>` tags and comments it out. |
-| `ellellemm-line-as-question` | Sets the current line as a question, wrapping it with `<QUESTION>` tags and commenting it out. |
-| `ellellemm-fill-buffer-with-answers` | Processes the entire buffer, answering all questions marked with `<QUESTION>` tags. |
+| Function Name | Description |
+|---------------|-------------|
+| `ellellemm-region-as-question` | Ask a question based on the selected region |
+| `ellellemm-line-as-question` | Ask a question based on the current line |
+| `ellellemm-groq-ask-llama31-versatile` | Ask a question using Groq's llama-3.1-70b-versatile model |
+| `ellellemm-groq-ask-llama31-instant` | Ask a question using Groq's llama-3.1-8b-instant model |
+| `ellellemm-groq-ask-mixtral` | Ask a question using Groq's mixtral-8x7b-32768 model |
+| `ellellemm-claude-ask-sonnet` | Ask a question using Claude's claude-3-5-sonnet-20240620 model |
+| `ellellemm-claude-ask-opus` | Ask a question using Claude's claude-3-opus-20240229 model |
+| `ellellemm-claude-ask-haiku` | Ask a question using Claude's claude-3-haiku-20240307 model |
+| `ellellemm-ask-question` | Ask a question using Claude's claude-3-5-sonnet-20240620 model (default) |
+| `ellellemm-groq-explain-llama31-versatile` | Explain selected code using Groq's llama-3.1-70b-versatile model |
+| `ellellemm-groq-explain-llama31-instant` | Explain selected code using Groq's llama-3.1-8b-instant model |
+| `ellellemm-groq-explain-mixtral` | Explain selected code using Groq's mixtral-8x7b-32768 model |
+| `ellellemm-claude-explain-sonnet` | Explain selected code using Claude's claude-3-5-sonnet-20240620 model |
+| `ellellemm-claude-explain-opus` | Explain selected code using Claude's claude-3-opus-20240229 model |
+| `ellellemm-claude-explain-haiku` | Explain selected code using Claude's claude-3-haiku-20240307 model |
+| `ellellemm-explain-code` | Explain selected code using Claude's claude-3-5-sonnet-20240620 model (default) |
 
-## Example Workflow
-
-1. Write your questions in the buffer, each on a separate line.
-2. Use `ellellemm-line-as-question` on each line to mark them as questions.
-3. Once all questions are marked, use `ellellemm-fill-buffer-with-answers` to process and answer all questions.
+You can bind these functions to keyboard shortcuts or call them using `M-x`.
 
 ## Configuration
 
-The package uses the `ANTHROPIC_API_KEY` environment variable for authentication. Make sure to set this variable with your Anthropic API key before using the package.
-
-## Dependencies
-
-- `plz`: Used for making HTTP requests to the Anthropic API.
+You can customize the behavior of ellellemm by modifying the provided functions or adding new ones based on your specific needs.
 
 ## Contributing
 
-Contributions to `ellellemm` are welcome! Please feel free to submit pull requests or create issues on the GitHub repository.
+Contributions to ellellemm are welcome! Please feel free to submit pull requests or create issues for bugs and feature requests.
 
 ## License
 
-This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for details.
 
 ## Author
 
 Deepankar Sharma <deepankarsharma@gmail.com>
-
-## Acknowledgments
-
-- Thanks to Anthropic for providing the Claude API.
-- This package is inspired by the growing need for AI assistance in programming environments.
