@@ -14,8 +14,9 @@
 
 ;;; Code:
 
+(require 'cl)
 (require 'plz)
-
+(require 'ediff)
 
 (defvar *ellellemm-model* "claude-3-5-sonnet-20240620"
   "The currently active model for ellellemm queries.")
@@ -59,6 +60,13 @@
   "Insert a visible line separator followed by two newlines."
   (insert "----------------\n\n"))
 
+(defun make-buffer-writable (buffer)
+  "Make BUFFER writable, handling potential errors."
+  (with-current-buffer buffer
+    (let ((inhibit-read-only t))
+      (setq buffer-read-only nil)
+      (when (fboundp 'read-only-mode)
+        (read-only-mode -1)))))
 
 (defun get-surrounding-lines (n)
   "Get N lines before and after the current line from the current buffer."
@@ -106,7 +114,11 @@ Temporarily disables user editing of the buffer."
       (_ (error "Unknown provider for model %s" model)))))
 
 
+
+
+;; ****************************************************************
 ;; Calls to LLM providers
+;; ****************************************************************
 
 (defun groq-external-process (prompt buffer model)
   "Stream Groq's response to PROMPT using MODEL and insert it into BUFFER using external processes."
@@ -127,7 +139,6 @@ Temporarily disables user editing of the buffer."
 | grep '^{' \
 | jq -j 'select(.choices != null) | .choices[0].delta.content // empty'"
                                       url api-key temp-file)))
-    ;;(message "groq curl command: %s" curl-and-jq-command)
     (with-current-buffer buffer
       (when *ellellemm-debug-mode*
         (insert "Debug: Groq curl command:\n")
@@ -190,8 +201,99 @@ Temporarily disables user editing of the buffer."
                                (message "Claude's response complete."))))))
 
 
-;; ************* Prompts *****************
+;; ****************************************************************
+;; Calls to LLM providers
+;; ****************************************************************
+(defun groq-external-process (prompt buffer model &optional finalizer-function)
+  "Stream Groq's response to PROMPT using MODEL and insert it into BUFFER using external processes.
+If FINALIZER-FUNCTION is provided, it will be called when the process is finished."
+  (let* ((url "https://api.groq.com/openai/v1/chat/completions")
+         (api-key (get-groq-api-key))
+         (json-payload `(("model" . ,model)
+                         ("messages" . [,(list (cons "role" "user")
+                                               (cons "content" prompt))])
+                         ("max_tokens" . 1024)
+                         ("stream" . t)))
+         (temp-file (make-temp-file "groq-request-" nil ".json"))
+         (curl-and-jq-command (format "curl -s -N -X POST %s \
+-H 'Authorization: Bearer %s' \
+-H 'Content-Type: application/json' \
+-d @%s \
+| grep '^data:' \
+| sed -u 's/^data: //g' \
+| grep '^{' \
+| jq -j 'select(.choices != null) | .choices[0].delta.content // empty'"
+                                      url api-key temp-file)))
+    (with-current-buffer buffer
+      (when *ellellemm-debug-mode*
+        (insert "Debug: Groq curl command:\n")
+        (insert (format "%s\n\n" (replace-regexp-in-string api-key "$GROQ_API_KEY" curl-and-jq-command)))))
+    (with-temp-file temp-file
+      (insert (json-encode json-payload)))
+    (make-process
+     :name "groq-stream"
+     :buffer buffer
+     :command (list "bash" "-c" curl-and-jq-command)
+     :filter (lambda (proc string)
+               (when (buffer-live-p (process-buffer proc))
+                 (with-current-buffer (process-buffer proc)
+                   (with-buffer-read-only
+                    (goto-char (point-max))
+                    (insert string)))))
+     :sentinel (lexical-let ((finalizer-function finalizer-function))
+                            (lambda (proc event)
+                              (when (string= event "finished\n")
+                                (message "Groq's response complete.")
+                                (when finalizer-function
+                                  (funcall finalizer-function))))))))
 
+(defun claude-external-process (prompt buffer model &optional finalizer-function)
+  "Stream Claude's response to PROMPT using MODEL and insert it into BUFFER using external processes.
+If FINALIZER-FUNCTION is provided, it will be called when the process is finished."
+  (let* ((url "https://api.anthropic.com/v1/messages")
+         (api-key (get-anthropic-api-key))
+         (json-payload `(("model" . ,model)
+                         ("messages" . [,(list (cons "role" "user")
+                                               (cons "content" prompt))])
+                         ("max_tokens" . 1024)
+                         ("stream" . t)))
+         (temp-file (make-temp-file "claude-request-" nil ".json"))
+         (curl-and-jq-command (format "curl -s -N -X POST %s \
+-H 'anthropic-version: 2023-06-01' \
+-H 'content-type: application/json' \
+-H 'x-api-key: %s' \
+-d @%s \
+| grep '^data:' \
+| sed -u 's/^data: //g' \
+| grep '^{' \
+| jq -j 'select(.type == \"content_block_delta\") | .delta.text // empty'"
+                                      url api-key temp-file)))
+    (with-current-buffer buffer
+      (when *ellellemm-debug-mode*
+        (insert "Debug: Claude curl command:\n")
+        (insert (format "%s\n\n" (replace-regexp-in-string api-key "$ANTHROPIC_API_KEY" curl-and-jq-command)))))
+    (with-temp-file temp-file
+      (insert (json-encode json-payload)))
+    (make-process
+     :name "claude-stream"
+     :buffer buffer
+     :command (list "bash" "-c" curl-and-jq-command)
+     :filter (lambda (proc string)
+               (when (buffer-live-p (process-buffer proc))
+                 (with-current-buffer (process-buffer proc)
+                   (with-buffer-read-only
+                    (goto-char (point-max))
+                    (insert string)))))
+     :sentinel (lexical-let ((finalizer-function finalizer-function))
+                            (lambda (proc event)
+                              (when (string= event "finished\n")
+                                (message "Claude's response complete.")
+                                (when finalizer-function
+                                  (funcall finalizer-function))))))))
+
+;; ****************************************************************
+;; ************* Prompts *****************
+;; ****************************************************************
 
 (defun generate-single-question-prompt (question)
   "Generate a prompt for Claude using the current region and surrounding context."
@@ -254,8 +356,34 @@ Please provide a detailed answer to the question, explaining any relevant concep
             code
             question)))
 
+(defun generate-patch-prompt (buffer-name buffer-contents buffer-mode instructions)
+  "Generate a prompt for creating a patch based on the given buffer information and instructions."
+  (format "Please create a patch for the following buffer:
+
+Buffer Name: %s
+Buffer Mode: %s
+
+Current Buffer Contents:
+```
+%s
+```
+
+Please provide a unified diff patch that implements the following instructions:
+%s
+
+Please provide the patch in the standard unified diff format, starting with '--- a/' and '+++ b/' lines. Do not include any explanations or comments outside the patch itself."
+          buffer-name
+          buffer-mode
+          buffer-contents
+          instructions))
 
 
+
+
+
+;; ****************************************************************
+;; *-model handler functions
+;; ****************************************************************
 
 (defun ellellemm-ask-model (question model)
   "Ask QUESTION to the specified MODEL."
@@ -300,9 +428,49 @@ Please provide a detailed answer to the question, explaining any relevant concep
         (funcall provider-fn prompt buffer model))
     (error "No region selected.  Please select a region of code to ask about")))
 
+(defun ellellemm-generate-patch-model (instructions model)
+  "Generate a patch for the current buffer based on INSTRUCTIONS using the specified MODEL, then apply it using ediff."
+  (let* ((buffer-name (buffer-name))
+         (buffer-contents (buffer-substring-no-properties (point-min) (point-max)))
+         (buffer-mode (symbol-name major-mode))
+         (prompt (generate-patch-prompt buffer-name buffer-contents buffer-mode instructions))
+         (output-buffer (get-buffer-create "*ellellemm-patch*"))
+         (provider (ellellemm-provider-from-model model))
+         (provider-fn (ellellemm-provider-fn model)))
+    (with-current-buffer output-buffer
+      (erase-buffer))
+      ;; (insert (format "# Generated Patch\n\n"))
+      ;; (insert (format "Buffer: %s\n" buffer-name))
+      ;; (insert (format "Instructions: %s\n" instructions))
+      ;; (insert (format "Model: %s\n\n" model))
+      ;; (insert (format "%s's response:\n\n" provider)))
+    
+    ;; Generate the patch
+    (funcall provider-fn prompt output-buffer model
+             (lexical-let ((prompt prompt)
+                           (output-buffer output-buffer)
+                           (model model))
+               (lambda ()
+                 (with-current-buffer output-buffer
+                   (goto-char (point-min))
+                   (if (re-search-forward "^--- a/" nil t)
+                       (let ((patch-content (buffer-substring-no-properties (match-beginning 0) (point-max))))
+                         ;; Create a temporary file for the patch
+                         (let ((patch-file (make-temp-file "ellellemm-patch-")))
+                           (when *ellellemm-debug-mode*
+                             (message "patch-file: %s" patch-file))
+                           (with-temp-file patch-file
+                             (insert patch-content)
+                             (let ((current-prefix-arg 2))
+                               (ediff-patch-buffer 2 output-buffer)))))
+                     (error "No valid patch found in the generated content"))))))))
 
-;; ************* END USER FACING *****************
+
+             
+
+;; ************* END USER FACING **********************************
 ;; Emacs interactive functions
+;; ****************************************************************
 
 (defun ellellemm-set-model (model)
   "Set the active MODEL for ellellemm queries."
@@ -340,5 +508,44 @@ Please provide a detailed answer to the question, explaining any relevant concep
   (setq *ellellemm-debug-mode* (not *ellellemm-debug-mode*))
   (message "Ellellemm debug mode %s" (if *ellellemm-debug-mode* "enabled" "disabled")))
 (provide 'ellellemm)
+
+(defun ellellemm-generate-patch (instructions)
+  "Generate and apply a patch for the current buffer based on INSTRUCTIONS using the active model."
+  (interactive "sEnter patch instructions: ")
+  (ellellemm-generate-patch-model instructions *ellellemm-model*))
+
+(defun ellellemm-accept-patch ()
+  "Replace the content of the current buffer with the content of its patched version."
+  (interactive)
+  (let* ((current-buffer-name (buffer-name))
+         (patched-buffer-name (concat current-buffer-name "_patched"))
+         (patched-buffer (get-buffer patched-buffer-name)))
+    (if patched-buffer
+        (progn
+          ;; Ensure we're in the original buffer
+          (switch-to-buffer current-buffer-name)
+          ;; Replace contents
+          (let ((inhibit-read-only t))  ; Temporarily allow editing read-only buffers
+            (erase-buffer)
+            (insert-buffer-substring patched-buffer))
+          ;; Kill the patched buffer
+          (kill-buffer patched-buffer)
+          (make-buffer-writable (get-buffer current-buffer-name))
+          (message "Patch accepted and applied. Buffer '%s' updated." current-buffer-name))
+      (error "No patched buffer found with name '%s'" patched-buffer-name))))
+
+(defun ellellemm-reject-patch ()
+  "Reject the patch by killing the patched buffer without modifying the current buffer."
+  (interactive)
+  (let* ((current-buffer-name (buffer-name))
+         (patched-buffer-name (concat current-buffer-name "_patched"))
+         (patched-buffer (get-buffer patched-buffer-name)))
+    (if patched-buffer
+        (progn
+          (kill-buffer patched-buffer)
+          (message "Patch rejected. Buffer '%s' was killed." patched-buffer-name))
+      (message "No patched buffer found with name '%s'. Nothing to reject." patched-buffer-name))))
+
+
 
 ;;; ellellemm.el ends here
