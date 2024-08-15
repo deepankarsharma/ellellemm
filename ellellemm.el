@@ -392,10 +392,13 @@ Please provide the patch in the standard unified diff format, starting with '---
          (provider (ellellemm-provider-from-model model))
          (provider-fn (ellellemm-provider-fn model)))
     (with-current-buffer buffer
-      (insert-line-separator)
-      (insert (format "# Question: %s" question))
-      (newline 2)
-      (insert (format "%s's response (%s):\n\n" provider model)))
+      (save-excursion
+        (point-max)
+        (newline 4)
+        (insert-line-separator)
+        (insert (format "# Question: %s" question))
+        (newline 2)
+        (insert (format "%s's response (%s):\n\n" provider model))))
     (funcall provider-fn prompt buffer model)))
 
 (defun ellellemm-explain-region-model (model)
@@ -405,9 +408,13 @@ Please provide the patch in the standard unified diff format, starting with '---
          (provider (ellellemm-provider-from-model model))
          (provider-fn (ellellemm-provider-fn model)))
     (with-current-buffer buffer
-      (insert-line-separator)
-      (insert "# Code Explanation\n\n")
-      (insert (format "%s's explanation (%s):\n\n" provider model)))
+      (save-excursion
+        (point-max)
+        (newline 4)
+        (insert-line-separator)
+        (insert "# Code Explanation")
+        (newline 2)
+        (insert (format "%s's explanation (%s):\n\n" provider model))))
     (funcall provider-fn prompt buffer model)))
 
 (defun ellellemm-ask-about-region-model (question model)
@@ -421,10 +428,13 @@ Please provide the patch in the standard unified diff format, starting with '---
              (provider (ellellemm-provider-from-model *ellellemm-model*))
              (provider-fn (ellellemm-provider-fn *ellellemm-model*)))
         (with-current-buffer buffer
-          (insert-line-separator)
-          (insert "# Question about Code\n\n")
-          (insert (format "Question: %s\n\n" question))
-          (insert (format "%s's response (%s):\n\n" provider model)))
+          (save-excursion
+            (point-max)
+            (newline 4)
+            (insert-line-separator)
+            (insert "# Question about Code\n\n")
+            (insert (format "Question: %s\n\n" question))
+            (insert (format "%s's response (%s):\n\n" provider model))))
         (funcall provider-fn prompt buffer model))
     (error "No region selected.  Please select a region of code to ask about")))
 
@@ -439,11 +449,6 @@ Please provide the patch in the standard unified diff format, starting with '---
          (provider-fn (ellellemm-provider-fn model)))
     (with-current-buffer output-buffer
       (erase-buffer))
-      ;; (insert (format "# Generated Patch\n\n"))
-      ;; (insert (format "Buffer: %s\n" buffer-name))
-      ;; (insert (format "Instructions: %s\n" instructions))
-      ;; (insert (format "Model: %s\n\n" model))
-      ;; (insert (format "%s's response:\n\n" provider)))
     
     ;; Generate the patch
     (funcall provider-fn prompt output-buffer model
