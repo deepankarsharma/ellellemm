@@ -114,97 +114,67 @@ Temporarily disables user editing of the buffer."
       (_ (error "Unknown provider for model %s" model)))))
 
 
+(defun ellellemm-buffer-jump-to (position)
+  "Jump to POSITION in ellellemm buffer."
+  (let* ((buffer (get-or-create-ellellemm-buffer))
+        (window (get-buffer-window buffer)))
+    (with-current-buffer buffer
+      (goto-char position))
+    (if (windowp window)
+        (select-window window)
+      (switch-to-buffer-other-window buffer))))
+      
+(defun ellellemm-buffer-jump-to (position)
+  "Jump to POSITION in ellellemm buffer and ensure it's visible."
+  (let* ((buffer (get-or-create-ellellemm-buffer))
+         (window (get-buffer-window buffer)))
+    (with-current-buffer buffer
+      (goto-char position)
+      (unless (pos-visible-in-window-p position)
+        (recenter)))
+    (if (windowp window)
+        (select-window window)
+      (switch-to-buffer-other-window buffer))
+    (with-selected-window (get-buffer-window buffer)
+      (unless (pos-visible-in-window-p position)
+        (recenter)))))
 
+
+(defun ellellemm-buffer-jump-to (position)
+  "Jump to POSITION in ellellemm buffer and ensure it's visible."
+  (message "position: %d" position)
+  (let* ((buffer (get-or-create-ellellemm-buffer))
+         (window (get-buffer-window buffer)))
+    (with-current-buffer buffer
+      (goto-char position))
+    (if (windowp window)
+        (progn
+          (select-window window)
+          (set-window-point window position)
+          (unless (pos-visible-in-window-p position window)
+            (recenter)))
+      (switch-to-buffer-other-window buffer))
+    (with-current-buffer buffer
+      (goto-char position))
+    (when (get-buffer-window buffer)
+      (set-window-point (get-buffer-window buffer) position)
+      (unless (pos-visible-in-window-p position (get-buffer-window buffer))
+        (with-selected-window (get-buffer-window buffer)
+          (recenter))))))
+
+
+(defun ellellemm-buffer-jump-to (position)
+  "Jump to POSITION in ellellemm buffer and ensure it's visible."
+  (let ((buffer (get-or-create-ellellemm-buffer)))
+    (pop-to-buffer buffer)
+    (goto-char position)
+    (unless (pos-visible-in-window-p)
+      (recenter))))
 
 ;; ****************************************************************
 ;; Calls to LLM providers
 ;; ****************************************************************
-
-(defun groq-external-process (prompt buffer model)
-  "Stream Groq's response to PROMPT using MODEL and insert it into BUFFER using external processes."
-  (let* ((url "https://api.groq.com/openai/v1/chat/completions")
-         (api-key (get-groq-api-key))
-         (json-payload `(("model" . ,model)
-                         ("messages" . [,(list (cons "role" "user")
-                                               (cons "content" prompt))])
-                         ("max_tokens" . 1024)
-                         ("stream" . t)))
-         (temp-file (make-temp-file "groq-request-" nil ".json"))
-         (curl-and-jq-command (format "curl -s -N -X POST %s \
--H 'Authorization: Bearer %s' \
--H 'Content-Type: application/json' \
--d @%s \
-| grep '^data:' \
-| sed -u 's/^data: //g' \
-| grep '^{' \
-| jq -j 'select(.choices != null) | .choices[0].delta.content // empty'"
-                                      url api-key temp-file)))
-    (with-current-buffer buffer
-      (when *ellellemm-debug-mode*
-        (insert "Debug: Groq curl command:\n")
-        (insert (format "%s\n\n" (replace-regexp-in-string api-key "$GROQ_API_KEY" curl-and-jq-command)))))
-    (with-temp-file temp-file
-      (insert (json-encode json-payload)))
-    (make-process
-     :name "groq-stream"
-     :buffer buffer
-     :command (list "bash" "-c" curl-and-jq-command)
-     :filter (lambda (proc string)
-               (when (buffer-live-p (process-buffer proc))
-                 (with-current-buffer (process-buffer proc)
-                   (with-buffer-read-only
-                    (goto-char (point-max))
-                    (insert string)))))
-     :sentinel (lambda (proc event)
-                 (when (string= event "finished\n")
-                   (message "Groq's response complete."))))))
-
-
-(defun claude-external-process (prompt buffer model)
-  "Stream Claude's response to PROMPT using MODEL and insert it into BUFFER using external processes."
-  (let* ((url "https://api.anthropic.com/v1/messages")
-         (api-key (get-anthropic-api-key))
-         (json-payload `(("model" . ,model)
-                         ("messages" . [,(list (cons "role" "user")
-                                               (cons "content" prompt))])
-                         ("max_tokens" . 1024)
-                         ("stream" . t)))
-         (temp-file (make-temp-file "claude-request-" nil ".json"))
-         (curl-and-jq-command (format "curl -s -N -X POST %s \
--H 'anthropic-version: 2023-06-01' \
--H 'content-type: application/json' \
--H 'x-api-key: %s' \
--d @%s \
-| grep '^data:' \
-| sed -u 's/^data: //g' \
-| grep '^{' \
-| jq -j 'select(.type == \"content_block_delta\") | .delta.text // empty'"
-                                      url api-key temp-file)))
-    (with-current-buffer buffer
-      (when *ellellemm-debug-mode*
-        (insert "Debug: Claude curl command:\n")
-        (insert (format "%s\n\n" (replace-regexp-in-string api-key "$ANTHROPIC_API_KEY" curl-and-jq-command)))))
-    (with-temp-file temp-file
-      (insert (json-encode json-payload)))
-    (make-process
-                 :name "claude-stream"
-                 :buffer buffer
-                 :command (list "bash" "-c" curl-and-jq-command)
-                 :filter (lambda (proc string)
-                           (when (buffer-live-p (process-buffer proc))
-                             (with-current-buffer (process-buffer proc)
-                               (with-buffer-read-only
-                                (goto-char (point-max))
-                                (insert string)))))
-                 :sentinel (lambda (proc event)
-                             (when (string= event "finished\n")
-                               (message "Claude's response complete."))))))
-
-
-;; ****************************************************************
-;; Calls to LLM providers
-;; ****************************************************************
-(defun groq-external-process (prompt buffer model &optional finalizer-function)
+(defun groq-external-process (prompt buffer model jump-to-point &optional finalizer-function)
   "Stream Groq's response to PROMPT using MODEL and insert it into BUFFER using external processes.
 If FINALIZER-FUNCTION is provided, it will be called when the process is finished."
   (let* ((url "https://api.groq.com/openai/v1/chat/completions")
@@ -240,14 +210,16 @@ If FINALIZER-FUNCTION is provided, it will be called when the process is finishe
                    (with-buffer-read-only
                     (goto-char (point-max))
                     (insert string)))))
-     :sentinel (lexical-let ((finalizer-function finalizer-function))
+     :sentinel (lexical-let ((finalizer-function finalizer-function)
+                             (jump-to-point jump-to-point))
                             (lambda (proc event)
                               (when (string= event "finished\n")
                                 (message "Groq's response complete.")
+                                (ellellemm-buffer-jump-to jump-to-point)
                                 (when finalizer-function
                                   (funcall finalizer-function))))))))
 
-(defun claude-external-process (prompt buffer model &optional finalizer-function)
+(defun claude-external-process (prompt buffer model jump-to-point &optional finalizer-function)
   "Stream Claude's response to PROMPT using MODEL and insert it into BUFFER using external processes.
 If FINALIZER-FUNCTION is provided, it will be called when the process is finished."
   (let* ((url "https://api.anthropic.com/v1/messages")
@@ -284,10 +256,12 @@ If FINALIZER-FUNCTION is provided, it will be called when the process is finishe
                    (with-buffer-read-only
                     (goto-char (point-max))
                     (insert string)))))
-     :sentinel (lexical-let ((finalizer-function finalizer-function))
+     :sentinel (lexical-let ((finalizer-function finalizer-function)
+                             (jump-to-point jump-to-point))
                             (lambda (proc event)
                               (when (string= event "finished\n")
                                 (message "Claude's response complete.")
+                                (ellellemm-buffer-jump-to jump-to-point)
                                 (when finalizer-function
                                   (funcall finalizer-function))))))))
 
@@ -392,14 +366,15 @@ Please provide the patch in the standard unified diff format, starting with '---
          (provider (ellellemm-provider-from-model model))
          (provider-fn (ellellemm-provider-fn model)))
     (with-current-buffer buffer
-      (save-excursion
-        (point-max)
-        (newline 4)
-        (insert-line-separator)
+      (goto-char (point-max))
+      (insert "\n\n\n\n")
+      (insert-line-separator)
+      (let
+          ((current-position (point-max)))
         (insert (format "# Question: %s" question))
         (newline 2)
-        (insert (format "%s's response (%s):\n\n" provider model))))
-    (funcall provider-fn prompt buffer model)))
+        (insert (format "%s's response (%s):\n\n" provider model))
+        (funcall provider-fn prompt buffer model current-position)))))
 
 (defun ellellemm-explain-region-model (model)
   "Explain the code in the selected region using the specified MODEL."
@@ -408,14 +383,15 @@ Please provide the patch in the standard unified diff format, starting with '---
          (provider (ellellemm-provider-from-model model))
          (provider-fn (ellellemm-provider-fn model)))
     (with-current-buffer buffer
-      (save-excursion
-        (point-max)
-        (newline 4)
-        (insert-line-separator)
+      (goto-char (point-max))
+      (newline 4)
+      (insert-line-separator)
+      (let
+          ((current-position (point-max)))
         (insert "# Code Explanation")
         (newline 2)
-        (insert (format "%s's explanation (%s):\n\n" provider model))))
-    (funcall provider-fn prompt buffer model)))
+        (insert (format "%s's explanation (%s):\n\n" provider model))
+        (funcall provider-fn prompt buffer model current-position)))))
 
 (defun ellellemm-ask-about-region-model (question model)
   "Ask a QUESTION about the code in the selected region using MODEL."
@@ -428,14 +404,15 @@ Please provide the patch in the standard unified diff format, starting with '---
              (provider (ellellemm-provider-from-model *ellellemm-model*))
              (provider-fn (ellellemm-provider-fn *ellellemm-model*)))
         (with-current-buffer buffer
-          (save-excursion
-            (point-max)
-            (newline 4)
-            (insert-line-separator)
+          (goto-char (point-max))
+          (newline 4)
+          (insert-line-separator)
+          (let
+              ((current-position (point-max)))
             (insert "# Question about Code\n\n")
             (insert (format "Question: %s\n\n" question))
-            (insert (format "%s's response (%s):\n\n" provider model))))
-        (funcall provider-fn prompt buffer model))
+            (insert (format "%s's response (%s):\n\n" provider model))
+            (funcall provider-fn prompt buffer model current-position))))
     (error "No region selected.  Please select a region of code to ask about")))
 
 (defun ellellemm-generate-patch-model (instructions model)
