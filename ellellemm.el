@@ -4,7 +4,7 @@
 
 ;; Author: Deepankar Sharma <deepankarsharma@gmail.com>
 ;; Version: 1.0
-;; Package-Requires: ((emacs "24.3"))
+;; Package-Requires: ((emacs "24.3") (plz "3.18.01") (poly-markdown "0.2.2"))
 ;; Keywords: llm, productivity
 ;; URL: https://github.com/deepankarsharma/ellellemm
 
