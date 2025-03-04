@@ -29,11 +29,10 @@
 ;; groq, llama-3.1-70b-versatile
 ;; groq, llama-3.1-8b-instant
 ;; groq, mixtral-8x7b-32768
-;; claude, claude-3-5-sonnet-20240620
-;; claude, claude-3-opus-20240229
-;; claude, claude-3-haiku-20240307
-
-
+;; claude, claude-3-7-sonnet-latest
+;; claude, claude-3-5-haiku-latest
+;; gemini, gemini-2.0-flash
+;; gemini, gemini-2.0-pro-exp-02-05
 
 ;; Utility functions
 (defun get-anthropic-api-key ()
@@ -100,6 +99,7 @@ Temporarily disables user editing of the buffer."
   "Deduce the provider (groq or claude) from the MODEL name."
   (cond
    ((string-prefix-p "claude-" model) "claude")
+   ((string-prefix-p "gemini-" model) "gemini")
    ((or (string-prefix-p "llama-" model)
         (string-prefix-p "mixtral-" model))
     "groq")
@@ -110,6 +110,7 @@ Temporarily disables user editing of the buffer."
   (let ((provider (ellellemm-provider-from-model model)))
     (pcase provider
       ("claude" #'claude-external-process)
+      ("gemini" #'gemini-external-process)
       ("groq" #'groq-external-process)
       (_ (error "Unknown provider for model %s" model)))))
 
@@ -265,16 +266,64 @@ If FINALIZER-FUNCTION is provided, it will be called when the process is finishe
                                 (when finalizer-function
                                   (funcall finalizer-function))))))))
 
+(defun gemini-external-process (prompt buffer model jump-to-point &optional finalizer-function)
+  "Stream Google Gemini's response to PROMPT using MODEL and put in BUFFER.
+If FINALIZER-FUNCTION is provided, it will be called when the process is finished."
+  (let* ((url (format "https://generativelanguage.googleapis.com/v1beta/models/%s:streamGenerateContent?alt=sse&key=%s" model (get-google-gemini-api-key)))
+         (json-payload `(("contents" . [,(list (cons "role" "user")
+                                                (cons "parts" (list (cons "text" prompt))))]))) ;  Added stopSequences for completeness, even if empty.
+         (temp-file (make-temp-file "gemini-request-" nil ".json"))
+         (curl-command (format "curl -s -N -X POST \"%s\" \
+-H 'Content-Type: application/json' \
+-d @%s \
+| grep '^data:' \
+| sed -u 's/^data: //g'"
+                               url temp-file))
+         (jq-command "jq -r --raw-output '.candidates[0].content.parts[0].text // empty'")
+         (curl-and-jq-command (format "%s | %s" curl-command jq-command)))
+    (with-current-buffer buffer
+      (when *ellellemm-debug-mode*
+        (insert "Debug: Gemini curl command:\n")
+        (insert (format "%s\n\n" (replace-regexp-in-string (get-google-gemini-api-key) "$GOOGLE_GEMINI_API_KEY" curl-and-jq-command)))
+        (insert curl-and-jq-command)))
+    (with-temp-file temp-file
+      (insert (json-encode json-payload)))
+    (make-process
+     :name "gemini-stream"
+     :buffer buffer
+     :command (list "bash" "-c" curl-and-jq-command)
+     :filter (lambda (proc string)
+                (when (buffer-live-p (process-buffer proc))
+                  (with-current-buffer (process-buffer proc)
+                    (with-buffer-read-only
+                      (goto-char (point-max))
+                      (insert string)))))
+     :sentinel (lexical-let ((finalizer-function finalizer-function)
+                              (jump-to-point jump-to-point))
+                 (lambda (proc event)
+                   (when (string= event "finished\n")
+                     (message "Gemini's response complete.")
+                     (ellellemm-buffer-jump-to jump-to-point)
+                     (when finalizer-function
+                       (funcall finalizer-function))))))))
+
+(defun get-google-gemini-api-key ()
+  "Retrieves the Google Gemini API key from Emacs's configuration."
+   (let ((api-key (getenv "GOOGLE_GEMINI_API_KEY")))
+     (unless api-key
+          (error "Google Gemini API key not found.  Set the GOOGLE_GEMINI_API_KEY environment variable"))
+     api-key))
+
 ;; ****************************************************************
 ;; ************* Prompts *****************
 ;; ****************************************************************
 
 (defun generate-single-question-prompt (question)
-  "Generate a prompt for Claude using the current region and surrounding context."
+  "Generate a prompt for Claude using the QUESTION, current region and surrounding context."
   (format "Answer the following technical question. Provide answer in markdown mode. %s" question))
 
 (defun generate-code-explanation-prompt ()
-  "Generate a prompt for Claude to explain the code in the selected region.  "
+  "Generate a prompt for Claude to explain the code in the selected region."
   (if (use-region-p)
       (let* ((region-start (region-beginning))
              (region-end (region-end))
@@ -459,12 +508,13 @@ Please provide the patch in the standard unified diff format, starting with '---
   (interactive
    (list
     (completing-read "Choose model: "
-                     '("claude-3-5-sonnet-20240620"
-                       "claude-3-opus-20240229"
-                       "claude-3-haiku-20240307"
+                     '("claude-3-7-sonnet-latest"
+                       "claude-3-5-haiku-latest"
                        "llama-3.1-70b-versatile"
                        "llama-3.1-8b-instant"
-                       "mixtral-8x7b-32768"))))
+                       "mixtral-8x7b-32768"
+                       "gemini-2.0-flash"
+                       "gemini-2.0-pro-exp-02-05"))))
   (setq *ellellemm-model* model)
   (message "Active model set to %s" model))
 
