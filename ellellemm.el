@@ -100,6 +100,7 @@ Temporarily disables user editing of the buffer."
   (cond
    ((string-prefix-p "claude-" model) "claude")
    ((string-prefix-p "gemini-" model) "gemini")
+   ((string-prefix-p "openai-" model) "openai")
    ((or (string-prefix-p "llama-" model)
         (string-prefix-p "mixtral-" model))
     "groq")
@@ -112,6 +113,7 @@ Temporarily disables user editing of the buffer."
       ("claude" #'claude-external-process)
       ("gemini" #'gemini-external-process)
       ("groq" #'groq-external-process)
+      ("openai" #'openai-external-process)
       (_ (error "Unknown provider for model %s" model)))))
 
 
@@ -314,6 +316,56 @@ If FINALIZER-FUNCTION is provided, it will be called when the process is finishe
           (error "Google Gemini API key not found.  Set the GOOGLE_GEMINI_API_KEY environment variable"))
      api-key))
 
+(defun get-openai-api-key ()
+  "Retrieve the OpenAI API key from the OPENAI_API_KEY environment variable."
+  (or (getenv "OPENAI_API_KEY")
+      (error "OPENAI_API_KEY environment variable is not set")))
+
+(defun openai-external-process (prompt buffer model jump-to-point &optional finalizer-function)
+  "Stream OpenAi's response to PROMPT using MODEL and insert it into BUFFER using external processes.
+If FINALIZER-FUNCTION is provided, it will be called when the process is finished."
+  (let* ((url "https://api.openai.com/v1/chat/completions")
+         (api-key (get-openai-api-key))
+         (json-payload `(("model" . ,model)
+                         ("messages" . [,(list (cons "role" "user")
+                                               (cons "content" prompt))])
+                         ("max_tokens" . 1024)
+                         ("stream" . t)))
+         (temp-file (make-temp-file "openai-request-" nil ".json"))
+         (curl-and-jq-command (format "curl -s -N -X POST %s \
+-H 'Authorization: Bearer %s' \
+-H 'Content-Type: application/json' \
+-d @%s \
+| grep '^data:' \
+| sed -u 's/^data: //g' \
+| grep '^{' \
+| jq -j 'select(.choices != null) | .choices[0].delta.content // empty'"
+                                      url api-key temp-file)))
+    (with-current-buffer buffer
+      (when *ellellemm-debug-mode*
+        (insert "Debug: OpenAI curl command:\n")
+        (insert (format "%s\n\n" (replace-regexp-in-string api-key "$OPENAI_API_KEY" curl-and-jq-command)))))
+    (with-temp-file temp-file
+      (insert (json-encode json-payload)))
+    (make-process
+     :name "openai-stream"
+     :buffer buffer
+     :command (list "bash" "-c" curl-and-jq-command)
+     :filter (lambda (proc string)
+               (when (buffer-live-p (process-buffer proc))
+                 (with-current-buffer (process-buffer proc)
+                   (with-buffer-read-only
+                    (goto-char (point-max))
+                    (insert string)))))
+     :sentinel (lexical-let ((finalizer-function finalizer-function)
+                             (jump-to-point jump-to-point))
+                            (lambda (proc event)
+                              (when (string= event "finished\n")
+                                (message "OpenAI response complete.")
+                                (ellellemm-buffer-jump-to jump-to-point)
+                                (when finalizer-function
+                                  (funcall finalizer-function))))))))
+
 ;; ****************************************************************
 ;; ************* Prompts *****************
 ;; ****************************************************************
@@ -514,7 +566,12 @@ Please provide the patch in the standard unified diff format, starting with '---
                        "llama-3.1-8b-instant"
                        "mixtral-8x7b-32768"
                        "gemini-2.0-flash"
-                       "gemini-2.0-pro-exp-02-05"))))
+                       "gemini-2.0-pro-exp-02-05"
+                       "openai-gpt-3.5-turbo"
+                       "openai-gpt-4"
+                       "openai-gpt-3.5-turbo-16k"
+                       "openai-gpt-4-32k"
+                       "openai-gpt-4-32k-turbo"))))
   (setq *ellellemm-model* model)
   (message "Active model set to %s" model))
 
@@ -577,6 +634,26 @@ Please provide the patch in the standard unified diff format, starting with '---
           (kill-buffer patched-buffer)
           (message "Patch rejected. Buffer '%s' was killed." patched-buffer-name))
       (message "No patched buffer found with name '%s'. Nothing to reject." patched-buffer-name))))
+
+(defun ellellemm-test-model (model question)
+  "Test if the model returns a response. "
+    (let* ((buffer (get-or-create-ellellemm-buffer))
+        (provider-fn (ellellemm-provider-fn model)))
+      (funcall provider-fn question buffer model))
+
+(defun ellellemm-test-all-models()
+    "Test all models"
+    (ellellemm-test-model "claude-3-7-sonnet-latest" "test")
+    (ellellemm-test-model "claude-3-5-haiku-latest" "test")
+    (ellellemm-test-model "llama-3.1-70b-versatile" "test")
+    (ellellemm-test-model "llama-3.1-8b-instant" "test")
+    (ellellemm-test-model "mixtral-8x7b-32768" "test")
+    (ellellemm-test-model "gemini-2.0-flash" "test")
+    (ellellemm-test-model "gemini-2.0-pro-exp-02-05")
+    (ellellemm-test-model "openai-gpt-3.5-turbo" "test")
+    (ellellemm-test-model "openai-gpt-4" "test")
+    (ellellemm-test-model "openai-gpt-3.5-turbo-16k")
+    (ellellemm-test-model "openai-gpt-4-32k"))
 
 
 
