@@ -24,6 +24,19 @@
 (defvar *ellellemm-debug-mode* nil
   "When non-nil, enable debug output for ellellemm operations.")
 
+(defgroup *ellellemm-group* nil
+  "Group to customize ellellemm.")
+
+(defvar *ellellemm-questions* '()
+  "List of questions I have asked ellellemm so far.")
+
+(defvar *ellellemm-regions* '()
+  "List of stored regions in the form (START END OVERLAY).")
+
+(when (and '*ellellemm-questions*
+           (not (member *ellellemm-questions* savehist-additional-variables)))
+  (push '*ellellemm-questions* savehist-additional-variables))
+
 ;; Supported models
 ;; Provider Name,  Model name
 ;; groq, llama-3.1-70b-versatile
@@ -33,6 +46,55 @@
 ;; claude, claude-3-5-haiku-latest
 ;; gemini, gemini-2.0-flash
 ;; gemini, gemini-2.0-pro-exp-02-05
+
+
+;; Selection and region related functions.
+(defun ellellemm-add-region ()
+  "Add the current region to `ellellemm-regions` and highlight it."
+  (interactive)
+  (if (use-region-p)
+      (let ((start (region-beginning))
+            (end (region-end)))
+        (let ((overlay (make-overlay start end)))
+          (overlay-put overlay 'face 'highlight)
+          (push (list start end overlay) ellellemm-regions))
+        (message "Region added!"))
+    (message "No active region to add.")))
+
+(defun ellellemm-highlight-regions ()
+  "Highlight all stored regions in `ellellemm-regions`."
+  (interactive)
+  (dolist (entry ellellemm-regions)
+    (let ((start (nth 0 entry))
+          (end (nth 1 entry)))
+      (let ((overlay (make-overlay start end)))
+        (overlay-put overlay 'face 'highlight)
+        (setf (nth 2 entry) overlay))))
+  (message "All stored regions highlighted."))
+
+(defun ellellemm-hide-highlights ()
+  "Remove highlight from all stored regions."
+  (interactive)
+  (dolist (entry ellellemm-regions)
+    (when (nth 2 entry) ;; Check if overlay exists
+      (delete-overlay (nth 2 entry))
+      (setf (nth 2 entry) nil)))
+  (message "All highlights removed."))
+
+(defun ellellemm-clear-regions ()
+  "Clear all stored regions and remove overlays."
+  (interactive)
+  (ellellemm-hide-highlights)
+  (setq ellellemm-regions '())
+  (message "Cleared all stored regions."))
+
+;; Keybindings using `C-c e` prefix for easy recall
+(global-set-key (kbd "C-c e a") 'ellellemm-add-region)      ;; (A)dd region
+(global-set-key (kbd "C-c e h") 'ellellemm-highlight-regions) ;; (H)ighlight stored regions
+(global-set-key (kbd "C-c e u") 'ellellemm-hide-highlights)   ;; (U)nhighlight regions
+(global-set-key (kbd "C-c e c") 'ellellemm-clear-regions)    ;; (C)lear all region
+
+
 
 ;; Utility functions
 (defun get-anthropic-api-key ()
@@ -522,6 +584,7 @@ Please provide the patch in the standard unified diff format, starting with '---
 (defun ellellemm-ask (question)
   "Ask QUESTION using the current *ellellemm-model*."
   (interactive "sAsk your question: ")
+  (add-to-list '*ellellemm-questions* question)
   (ellellemm-ask-model question *ellellemm-model*))
 
 (defun ellellemm-explain-region ()
